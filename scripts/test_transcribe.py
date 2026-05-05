@@ -26,7 +26,10 @@ from transcribe_podcast import (
     format_txt,
     get_episode_list,
     get_episode_detail,
+    get_podcast_detail,
+    sanitize_filename,
     search_episodes,
+    search_podcasts,
 )
 
 
@@ -174,6 +177,52 @@ class TestCheckEnv(unittest.TestCase):
         mock_exists.return_value = False
         result = check_env(None)
         self.assertFalse(result)
+
+
+class TestSanitizeFilename(unittest.TestCase):
+    def test_basic(self):
+        self.assertEqual(sanitize_filename("hello world"), "hello world")
+
+    def test_special_chars(self):
+        result = sanitize_filename("a/b:c|d")
+        self.assertNotIn("/", result)
+        self.assertNotIn(":", result)
+        self.assertNotIn("|", result)
+
+    def test_empty(self):
+        self.assertEqual(sanitize_filename(""), "untitled")
+
+    def test_truncation(self):
+        long_title = "x" * 200
+        result = sanitize_filename(long_title, max_len=50)
+        self.assertLessEqual(len(result), 50)
+
+    def test_chinese(self):
+        result = sanitize_filename("中文标题测试")
+        self.assertEqual(result, "中文标题测试")
+
+    def test_strip_whitespace(self):
+        self.assertEqual(sanitize_filename("  spaces  "), "spaces")
+
+
+class TestNewApiFunctions(unittest.TestCase):
+    @patch("transcribe_podcast.api")
+    def test_search_podcasts(self, mock_api):
+        mock_api.return_value = {
+            "data": {"data": [
+                {"type": "PODCAST", "pid": "p1", "title": "Pod1"},
+                {"type": "EPISODE", "eid": "e1"},
+            ]}
+        }
+        result = search_podcasts("token", "test")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["pid"], "p1")
+
+    @patch("transcribe_podcast.api")
+    def test_get_podcast_detail(self, mock_api):
+        mock_api.return_value = {"data": {"data": {"pid": "abc", "title": "Podcast"}}}
+        result = get_podcast_detail("token", "abc")
+        self.assertEqual(result["title"], "Podcast")
 
 
 if __name__ == "__main__":

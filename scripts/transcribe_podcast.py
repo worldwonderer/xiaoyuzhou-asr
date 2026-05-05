@@ -90,6 +90,20 @@ class AudioError(TranscriptionError):
     """Audio processing error."""
 
 
+def sanitize_filename(title: str, max_len: int = 50) -> str:
+    """Create a safe cross-platform filename from a title."""
+    # Replace common separators with hyphens
+    name = re.sub(r"[/\\|:]", "-", title)
+    # Remove characters unsafe on any platform
+    name = re.sub(r'[<>"*?\x00-\x1f]', "", name)
+    # Collapse whitespace and hyphens
+    name = re.sub(r"[\s_]+", " ", name).strip()
+    # Truncate to max_len (keeping valid unicode chars)
+    if len(name) > max_len:
+        name = name[:max_len].rsplit(" ", 1)[0].rstrip("- ")
+    return name or "untitled"
+
+
 # --- API ---
 
 def api(endpoint: str, token: str, payload: dict, _retry: bool = True) -> dict:
@@ -163,6 +177,44 @@ def get_episode_list(token: str, pid: str, count: int = 5) -> list:
     result = api("/episode_list", token, {"pid": pid, "order": "desc"})
     episodes = result.get("data", {}).get("data", [])
     return episodes[:count]
+
+
+def search_podcasts(token: str, keyword: str, limit: int = 5) -> list:
+    """Search podcasts by keyword."""
+    result = api("/search", token, {"keyword": keyword, "type": "PODCAST"})
+    podcasts = []
+    for item in result.get("data", {}).get("data", []):
+        if item.get("type") == "PODCAST":
+            podcasts.append(item)
+    return podcasts[:limit]
+
+
+def get_podcast_detail(token: str, pid: str) -> dict:
+    """Get podcast detail."""
+    result = api("/podcast_detail", token, {"pid": pid})
+    return result.get("data", {}).get("data", {})
+
+
+def show_podcast_info(token: str, keyword: str) -> None:
+    """Search and display podcast info for finding PIDs."""
+    podcasts = search_podcasts(token, keyword)
+    if not podcasts:
+        print(f"未找到与 '{keyword}' 相关的播客")
+        return
+
+    print(f"\n找到 {len(podcasts)} 个播客:\n")
+    for i, p in enumerate(podcasts):
+        pid = p.get("pid", "?")
+        title = p.get("title", "未知")
+        sub_count = p.get("subscriptionCount", 0)
+        ep_count = p.get("episodeCount", 0)
+        author = p.get("author", "")
+        print(f"  {i+1}. {title}")
+        if author:
+            print(f"     作者: {author}")
+        print(f"     PID: {pid}")
+        print(f"     订阅: {sub_count:,} | 集数: {ep_count}")
+        print()
 
 
 # --- Audio Processing ---
@@ -575,7 +627,7 @@ def transcribe_episode(token: str, eid: str, model_dir: str, asr_bin: str, keep_
     print(f"音频: {size_mb:.1f} MB, {media.get('mimeType', 'unknown')}")
 
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-    safe_title = eid or re.sub(r"[^\w\s-]", "", title)[:30]
+    safe_title = sanitize_filename(title) if title != "未知" else eid
     m4a_path = AUDIO_DIR / f"{safe_title}.m4a"
     wav_path = AUDIO_DIR / f"{safe_title}.wav"
     seg_dir = AUDIO_DIR / f"{safe_title}_segments"
@@ -628,7 +680,7 @@ def run_transcription(args: argparse.Namespace) -> str:
             ext = "srt" if fmt == "srt" else "md" if fmt == "markdown" else "txt"
             remaining = []
             for ep in episodes_meta:
-                safe = re.sub(r"[^\w\s-]", "", ep.get("title", "unknown"))[:50]
+                safe = sanitize_filename(ep.get("title", f"ep-unknown"))
                 ep_path = out_dir / f"{safe}.{ext}"
                 if ep_path.exists() and ep_path.stat().st_size > 0:
                     print(f"  跳过 (已存在): {ep.get('title', '?')}")
@@ -658,7 +710,7 @@ def run_transcription(args: argparse.Namespace) -> str:
             if out_dir:
                 if out_dir.is_dir() or not out_dir.suffix:
                     out_dir.mkdir(parents=True, exist_ok=True)
-                    safe = re.sub(r"[^\w\s-]", "", episode.get("title", f"ep{i}"))[:50]
+                    safe = sanitize_filename(episode.get("title", f"ep{i}"))
                     ext = "srt" if fmt == "srt" else "md" if fmt == "markdown" else "txt"
                     ep_path = out_dir / f"{safe}.{ext}"
                     ep_path.write_text(output, encoding="utf-8")
@@ -692,6 +744,7 @@ def main():
     parser.add_argument("--keyword", help="搜索关键词")
     parser.add_argument("--eid", help="单集 ID (可替代关键词搜索)")
     parser.add_argument("--pid", help="播客 ID (批量模式，配合 --count)")
+    parser.add_argument("--podcast-info", action="store_true", help="搜索播客并显示 PID 等信息")
     parser.add_argument("--count", type=int, default=3, help="批量转录集数 (默认 3)")
     parser.add_argument("--model-dir", help="Qwen3-ASR 模型目录 (或设置 QWEN3_ASR_MODEL_DIR)")
     parser.add_argument("--asr-bin", help="qwen3-asr-rs local_transcribe 路径 (或设置 QWEN3_ASR_BIN)")
@@ -707,8 +760,17 @@ def main():
             ok = check_env(args.token)
             sys.exit(0 if ok else 1)
 
+        if args.podcast_info:
+            if not args.keyword:
+                parser.error("--podcast-info 需要配合 --keyword 指定搜索关键词")
+            token = args.token or os.environ.get("XYZ_ACCESS_TOKEN", "")
+            if not token:
+                raise ApiError("需要 access token (--token 或 XYZ_ACCESS_TOKEN 环境变量)")
+            show_podcast_info(token, args.keyword)
+            return
+
         if not args.eid and not args.keyword and not args.pid:
-            parser.error("需要 --eid、--keyword 或 --pid (或使用 --check-env 检查环境)")
+            parser.error("需要 --eid、--keyword 或 --pid (或使用 --check-env / --podcast-info)")
 
         output = run_transcription(args)
 
