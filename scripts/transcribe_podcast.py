@@ -112,7 +112,7 @@ def load_config() -> dict:
     """Load config from ~/.xiaoyuzhou-asr.json."""
     if CONFIG_PATH.exists():
         try:
-            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
         except (json.JSONDecodeError, OSError):
             pass
     return {}
@@ -218,7 +218,7 @@ def api(endpoint: str, token: str, payload: dict, _retry: bool = True) -> dict:
     )
     try:
         with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read())
+            return json.loads(resp.read())  # type: ignore[no-any-return]
     except urllib.error.HTTPError as e:
         if e.code == 401 and _retry:
             refresh_token = os.environ.get("XYZ_REFRESH_TOKEN")
@@ -265,14 +265,14 @@ def search_episodes(token: str, keyword: str, limit: int = 5) -> list:
 def get_episode_detail(token: str, eid: str) -> dict:
     """Get episode detail by eid."""
     result = api("/episode_detail", token, {"eid": eid})
-    return result.get("data", {}).get("data", {})
+    return result.get("data", {}).get("data", {})  # type: ignore[no-any-return]
 
 
 def get_episode_list(token: str, pid: str, count: int = 5) -> list:
     """Get recent episodes of a podcast."""
     result = api("/episode_list", token, {"pid": pid, "order": "desc"})
-    episodes = result.get("data", {}).get("data", [])
-    return episodes[:count]
+    episodes = result.get("data", {}).get("data", [])  # type: ignore[assignment]
+    return episodes[:count]  # type: ignore[no-any-return]
 
 
 def search_podcasts(token: str, keyword: str, limit: int = 5) -> list:
@@ -288,7 +288,7 @@ def search_podcasts(token: str, keyword: str, limit: int = 5) -> list:
 def get_podcast_detail(token: str, pid: str) -> dict:
     """Get podcast detail."""
     result = api("/podcast_detail", token, {"pid": pid})
-    return result.get("data", {}).get("data", {})
+    return result.get("data", {}).get("data", {})  # type: ignore[no-any-return]
 
 
 def show_podcast_info(token: str, keyword: str) -> None:
@@ -354,6 +354,7 @@ def download_audio(url: str, output_path: Path, max_retries: int = 3) -> Path:
                     output_path.unlink()
             else:
                 raise AudioError(f"下载音频失败 ({max_retries} 次尝试): {e}")
+    raise AudioError(f"下载音频失败: 未预期流程")
 
 
 def convert_to_wav(input_path: Path, output_path: Path) -> Path:
@@ -400,7 +401,7 @@ def split_audio(wav_path: Path, output_dir: Path) -> list[Path]:
 
     ends = re.findall(r"silence_end:\s*([\d.]+)", result.stderr)
     MIN_SEGMENT_SEC = 60
-    split_times = []
+    split_times: list[float] = []
     for t in ends:
         sec = float(t)
         if sec < MIN_SEGMENT_SEC:
@@ -532,7 +533,7 @@ def transcribe_segments(segments: list[Path], model_dir: str, asr_bin: str) -> t
 
 # --- Output ---
 
-def format_output(episode: dict, transcript: str) -> str:
+def format_output(episode: dict, transcript: str, _segment_timings: Optional[list] = None) -> str:
     """Format transcript as markdown."""
     title = episode.get("title", "未知标题")
     podcast = episode.get("podcast", {})
@@ -614,7 +615,7 @@ def format_srt(episode: dict, transcript: str, segment_timings: Optional[list] =
     return "\n\n".join(lines)
 
 
-def format_txt(episode: dict, transcript: str) -> str:
+def format_txt(episode: dict, transcript: str, _segment_timings: Optional[list] = None) -> str:
     """Format transcript as plain text."""
     title = episode.get("title", "未知标题")
     podcast = episode.get("podcast", {})
@@ -846,7 +847,7 @@ def run_transcription(args: argparse.Namespace) -> str:
             episode, transcript, timings = transcribe_episode(
                 token, eid, model_dir, asr_bin, args.keep_audio,
             )
-            output = formatter(episode, transcript, timings) if fmt == "srt" else formatter(episode, transcript)
+            output = formatter(episode, transcript, timings)
             results.append((episode, output))
 
             if out_dir:
@@ -877,7 +878,7 @@ def run_transcription(args: argparse.Namespace) -> str:
     episode, transcript, timings = transcribe_episode(
         token, eid, model_dir, asr_bin, args.keep_audio,
     )
-    return formatter(episode, transcript, timings) if fmt == "srt" else formatter(episode, transcript)
+    return formatter(episode, transcript, timings)
 
 
 def main():
