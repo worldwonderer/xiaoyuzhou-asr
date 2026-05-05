@@ -104,6 +104,101 @@ def sanitize_filename(title: str, max_len: int = 50) -> str:
     return name or "untitled"
 
 
+CONFIG_PATH = Path.home() / ".xiaoyuzhou-asr.json"
+
+
+def load_config() -> dict:
+    """Load config from ~/.xiaoyuzhou-asr.json."""
+    if CONFIG_PATH.exists():
+        try:
+            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def save_config(config: dict) -> None:
+    """Save config to ~/.xiaoyuzhou-asr.json."""
+    CONFIG_PATH.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"配置已保存到 {CONFIG_PATH}")
+
+
+def resolve_setting(cli_value: Optional[str], env_key: str, config_key: str) -> Optional[str]:
+    """Resolve a setting from CLI arg > env var > config file."""
+    if cli_value:
+        return cli_value
+    env_val = os.environ.get(env_key)
+    if env_val:
+        return env_val
+    return load_config().get(config_key)
+
+
+def do_login(base_url: str) -> None:
+    """Interactive login flow: send code → verify → save tokens."""
+    import urllib.request
+    import urllib.error
+
+    phone = input("手机号 (含区号，如 13111111111): ").strip()
+    if not phone:
+        print("手机号不能为空")
+        return
+
+    area_code = "+86"
+    # Send verification code
+    req = urllib.request.Request(
+        f"{base_url}/sendCode",
+        data=json.dumps({"mobilePhoneNumber": phone, "areaCode": area_code}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read())
+        print(f"验证码已发送到 {phone}")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"发送验证码失败: {e.code} {body[:200]}")
+        return
+    except urllib.error.URLError as e:
+        print(f"无法连接 {base_url}，请确认 xyz 服务已启动")
+        return
+
+    code = input("验证码: ").strip()
+    if not code:
+        print("验证码不能为空")
+        return
+
+    # Login
+    req = urllib.request.Request(
+        f"{base_url}/login",
+        data=json.dumps({"mobilePhoneNumber": phone, "areaCode": area_code, "verifyCode": code}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"登录失败: {e.code} {body[:200]}")
+        return
+
+    data = result.get("data", {})
+    access_token = data.get("x-jike-access-token") or data.get("token", "")
+    refresh_token = data.get("x-jike-refresh-token") or data.get("refreshToken", "")
+
+    if not access_token:
+        print(f"登录响应异常: {json.dumps(result, ensure_ascii=False)[:200]}")
+        return
+
+    config = load_config()
+    config["token"] = access_token
+    if refresh_token:
+        config["refresh_token"] = refresh_token
+    save_config(config)
+    print("登录成功!")
+
+
 # --- API ---
 
 def api(endpoint: str, token: str, payload: dict, _retry: bool = True) -> dict:
@@ -676,12 +771,12 @@ def transcribe_episode(token: str, eid: str, model_dir: str, asr_bin: str, keep_
 
 def run_transcription(args: argparse.Namespace) -> str:
     """Core transcription logic. Returns formatted output. Raises on error."""
-    token = args.token or os.environ.get("XYZ_ACCESS_TOKEN", "")
+    token = resolve_setting(args.token, "XYZ_ACCESS_TOKEN", "token") or ""
     if not token:
-        raise ApiError("需要 access token (--token 或 XYZ_ACCESS_TOKEN 环境变量)")
+        raise ApiError("需要 access token (--login 登录, 或设置 --token / XYZ_ACCESS_TOKEN)")
 
-    model_dir = args.model_dir or _detect_model_dir()
-    asr_bin = args.asr_bin or _detect_asr_bin()
+    model_dir = resolve_setting(args.model_dir, "QWEN3_ASR_MODEL_DIR", "model_dir") or _detect_model_dir()
+    asr_bin = resolve_setting(args.asr_bin, "QWEN3_ASR_BIN", "asr_bin") or _detect_asr_bin()
     fmt = args.format or "markdown"
     formatter = FORMATTERS.get(fmt)
     if not formatter:
@@ -776,17 +871,23 @@ def main():
     parser.add_argument("--output", "-o", help="输出文件/目录路径 (默认 stdout)")
     parser.add_argument("--keep-audio", action="store_true", help="保留下载的音频文件")
     parser.add_argument("--check-env", action="store_true", help="检查所有依赖是否就绪")
+    parser.add_argument("--login", action="store_true", help="交互式登录并保存 token")
     args = parser.parse_args()
 
     try:
         if args.check_env:
-            ok = check_env(args.token)
+            token = resolve_setting(args.token, "XYZ_ACCESS_TOKEN", "token")
+            ok = check_env(token)
             sys.exit(0 if ok else 1)
+
+        if args.login:
+            do_login(BASE_URL)
+            return
 
         if args.podcast_info:
             if not args.keyword:
                 parser.error("--podcast-info 需要配合 --keyword 指定搜索关键词")
-            token = args.token or os.environ.get("XYZ_ACCESS_TOKEN", "")
+            token = resolve_setting(args.token, "XYZ_ACCESS_TOKEN", "token") or ""
             if not token:
                 raise ApiError("需要 access token (--token 或 XYZ_ACCESS_TOKEN 环境变量)")
             show_podcast_info(token, args.keyword)
@@ -795,7 +896,7 @@ def main():
         if args.list_episodes:
             if not args.pid:
                 parser.error("--list-episodes 需要配合 --pid 指定播客 ID")
-            token = args.token or os.environ.get("XYZ_ACCESS_TOKEN", "")
+            token = resolve_setting(args.token, "XYZ_ACCESS_TOKEN", "token") or ""
             if not token:
                 raise ApiError("需要 access token (--token 或 XYZ_ACCESS_TOKEN 环境变量)")
             list_episodes(token, args.pid, args.count or 10)
