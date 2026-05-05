@@ -108,13 +108,19 @@ for seg in segments {
 
 ### Step 5: Format Output
 
-Combine transcript with metadata as markdown:
-```markdown
-# {title}
-**节目**: {podcast.title} | **日期**: {pubDate} | **时长**: {duration}s
+Combine transcript with metadata. Supports three formats:
+- `--format markdown` (default): Full metadata header + transcript
+- `--format srt`: SRT subtitles with estimated timestamps
+- `--format txt`: Plain text with minimal header
 
-## 转录文本
-{transcript}
+### Batch Transcription
+
+Transcribe the N most recent episodes of a podcast:
+```bash
+# Transcribe 5 latest episodes, save to directory
+python3 scripts/transcribe_podcast.py \
+  --token $TOKEN --pid PODCAST_ID --count 5 \
+  --format markdown -o ./transcripts/
 ```
 
 ## References
@@ -122,10 +128,27 @@ Combine transcript with metadata as markdown:
 - **xyz API endpoints and auth**: [references/xyz-api.md](references/xyz-api.md)
 - **Qwen3-ASR usage and performance**: [references/qwen3-asr.md](references/qwen3-asr.md)
 
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `XYZ_ACCESS_TOKEN` | x-jike access token | — (required) |
+| `XYZ_REFRESH_TOKEN` | Refresh token for auto-renewal | — (optional) |
+| `XYZ_BASE_URL` | xyz API base URL | `http://localhost:23020` |
+| `QWEN3_ASR_MODEL_DIR` | Qwen3-ASR model directory | auto-detect `~/qwen3-asr-models/0.6B` |
+| `QWEN3_ASR_BIN` | local_transcribe binary path | auto-detect `~/qwen3-asr-rs/target/release/examples/local_transcribe` |
+
+## Environment Check
+
+Before first use, verify all dependencies:
+```bash
+python3 scripts/transcribe_podcast.py --check-env --token $XYZ_ACCESS_TOKEN
+```
+This checks: ffmpeg, ffprobe, xyz API connectivity, token validity, ASR binary, and model files.
+
 ## Token Management
 
-- Tokens expire. If API returns 401, refresh: `POST /refresh_token`
-- Store in env: `XYZ_ACCESS_TOKEN`, `XYZ_REFRESH_TOKEN`
+- Tokens expire. If API returns 401, auto-refresh using `XYZ_REFRESH_TOKEN`
 - Prompt user to login if no valid token
 
 ## Constraints

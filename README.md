@@ -33,8 +33,21 @@ npx skills add worldwonderer/xiaoyuzhou-asr -y
 也可以直接运行脚本：
 
 ```bash
+# 检查环境是否就绪
+python3 scripts/transcribe_podcast.py --check-env --token YOUR_TOKEN
+
+# 转录播客
 python3 scripts/transcribe_podcast.py \
   --token YOUR_TOKEN --keyword "早咖啡" -o output.md
+```
+
+也可以作为 Python 库使用：
+
+```python
+from transcribe_podcast import search_episodes, run_transcription
+
+episodes = search_episodes(token, "早咖啡")
+# 所有异常使用 TranscriptionError 体系，不会 sys.exit
 ```
 
 ## Skill 组成
