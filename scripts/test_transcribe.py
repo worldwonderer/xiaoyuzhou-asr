@@ -27,7 +27,10 @@ from transcribe_podcast import (
     get_episode_list,
     get_episode_detail,
     get_podcast_detail,
+    load_config,
+    resolve_setting,
     sanitize_filename,
+    save_config,
     search_episodes,
     search_podcasts,
 )
@@ -223,6 +226,55 @@ class TestNewApiFunctions(unittest.TestCase):
         mock_api.return_value = {"data": {"data": {"pid": "abc", "title": "Podcast"}}}
         result = get_podcast_detail("token", "abc")
         self.assertEqual(result["title"], "Podcast")
+
+
+class TestConfigFile(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.config_path = Path(self.tmpdir) / "test-config.json"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    @patch("transcribe_podcast.CONFIG_PATH")
+    def test_load_nonexistent(self, mock_path):
+        mock_path.__str__ = lambda s: "/nonexistent/path.json"
+        mock_path.exists.return_value = False
+        config = load_config()
+        self.assertEqual(config, {})
+
+    @patch("transcribe_podcast.CONFIG_PATH")
+    def test_save_and_load(self, mock_path):
+        mock_path.__str__ = lambda s: str(self.config_path)
+        mock_path.exists.return_value = True
+        mock_path.write_text = lambda data, encoding: self.config_path.write_text(data, encoding=encoding)
+        mock_path.read_text = lambda encoding: self.config_path.read_text(encoding=encoding)
+
+        save_config({"token": "test123", "model_dir": "/tmp/models"})
+        config = load_config()
+        self.assertEqual(config["token"], "test123")
+        self.assertEqual(config["model_dir"], "/tmp/models")
+
+    def test_resolve_setting_cli_wins(self):
+        with patch.dict(os.environ, {"TEST_VAR": "env_val"}):
+            result = resolve_setting("cli_val", "TEST_VAR", "key")
+            self.assertEqual(result, "cli_val")
+
+    def test_resolve_setting_env_fallback(self):
+        with patch.dict(os.environ, {"TEST_VAR": "env_val"}):
+            result = resolve_setting(None, "TEST_VAR", "key")
+            self.assertEqual(result, "env_val")
+
+    @patch("transcribe_podcast.load_config")
+    def test_resolve_setting_config_fallback(self, mock_config):
+        mock_config.return_value = {"my_key": "config_val"}
+        result = resolve_setting(None, "NONEXISTENT_VAR", "my_key")
+        self.assertEqual(result, "config_val")
+
+    def test_resolve_setting_none(self):
+        result = resolve_setting(None, "NONEXISTENT_VAR", "missing_key")
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":
