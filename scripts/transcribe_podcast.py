@@ -25,6 +25,7 @@ from urllib.error import URLError
 BASE_URL = os.environ.get("XYZ_BASE_URL", "http://localhost:23020")
 AUDIO_DIR = Path(tempfile.gettempdir()) / "xiaoyuzhou-audio"
 MAX_SEGMENT_SEC = 180  # 3 min — Metal GPU hangs on longer segments
+VERSION = "2.0.0"
 
 
 # --- Auto-detect paths ---
@@ -872,6 +873,7 @@ def main():
     parser.add_argument("--keep-audio", action="store_true", help="保留下载的音频文件")
     parser.add_argument("--check-env", action="store_true", help="检查所有依赖是否就绪")
     parser.add_argument("--login", action="store_true", help="交互式登录并保存 token")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     args = parser.parse_args()
 
     try:
