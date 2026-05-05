@@ -101,6 +101,21 @@ class TestFormatSrt(unittest.TestCase):
         self.assertIn("\n\n2\n", result)
         self.assertIn("\n\n3\n", result)
 
+    def test_srt_with_segment_timings(self):
+        timings = [
+            ("第一句。第二句。", 0.0, 120.0),
+            ("第三句。", 120.0, 300.0),
+        ]
+        result = format_srt({"duration": 300}, "unused", timings)
+        # Should have 3 entries
+        self.assertTrue(result.startswith("1\n"))
+        self.assertIn("\n\n2\n", result)
+        self.assertIn("\n\n3\n", result)
+        # First sentence starts at 0
+        self.assertIn("00:00:00,000", result)
+        # Third sentence starts at 120s
+        self.assertIn("00:02:00", result)
+
     def test_empty_transcript(self):
         result = format_srt({"duration": 120}, "")
         self.assertIn("-->", result)

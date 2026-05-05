@@ -512,17 +512,22 @@ def transcribe_segment(wav_path: Path, model_dir: str, asr_bin: str) -> str:
     return result.stdout.strip()
 
 
-def transcribe_segments(segments: list[Path], model_dir: str, asr_bin: str) -> str:
-    """Transcribe multiple segments and combine."""
+def transcribe_segments(segments: list[Path], model_dir: str, asr_bin: str) -> tuple[str, list[tuple[str, float, float]]]:
+    """Transcribe multiple segments. Returns (combined_text, segment_timings)."""
     texts = []
+    timings = []
     total = len(segments)
+    offset = 0.0
     for i, seg in enumerate(segments):
         pct = (i + 1) / total * 100
         print(f"  [{i+1}/{total}] ({pct:.0f}%)", end=" ")
         text = transcribe_segment(seg, model_dir, asr_bin)
         if text:
+            seg_dur = get_duration_sec(seg)
             texts.append(text)
-    return "\n\n".join(texts)
+            timings.append((text, offset, offset + seg_dur))
+            offset += seg_dur
+    return "\n\n".join(texts), timings
 
 
 # --- Output ---
@@ -558,35 +563,54 @@ def format_output(episode: dict, transcript: str) -> str:
     return "\n".join(lines)
 
 
-def format_srt(episode: dict, transcript: str) -> str:
-    """Format transcript as SRT subtitles with estimated timestamps."""
-    duration = episode.get("duration", 0)
-    title = episode.get("title", "未知标题")
+def _srt_time(sec: float) -> str:
+    """Format seconds as SRT timestamp HH:MM:SS,mmm."""
+    h, remainder = divmod(int(sec), 3600)
+    m, s = divmod(remainder, 60)
+    ms = int((sec % 1) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
-    # Split into sentences for subtitle entries
+
+def format_srt(episode: dict, transcript: str, segment_timings: Optional[list] = None) -> str:
+    """Format transcript as SRT subtitles with segment-aware timestamps."""
+    duration = episode.get("duration", 0)
+
+    if segment_timings:
+        # Use actual segment boundaries for accurate timestamps
+        lines = []
+        idx = 1
+        for seg_text, seg_start, seg_end in segment_timings:
+            sentences = re.split(r"(?<=[。！？\.\!])\s*", seg_text)
+            sentences = [s.strip() for s in sentences if s.strip()]
+            if not sentences:
+                continue
+            seg_dur = seg_end - seg_start
+            total_chars = sum(len(s) for s in sentences)
+            if total_chars == 0:
+                continue
+            char_offset = 0.0
+            for sentence in sentences:
+                char_frac = len(sentence) / total_chars
+                s_start = seg_start + char_offset * seg_dur
+                s_end = seg_start + (char_offset + char_frac) * seg_dur
+                lines.append(f"{idx}\n{_srt_time(s_start)} --> {_srt_time(s_end)}\n{sentence}")
+                idx += 1
+                char_offset += char_frac
+        return "\n\n".join(lines)
+
+    # Fallback: estimate by evenly distributing across duration
     sentences = re.split(r"(?<=[。！？\.\!])\s*", transcript)
     sentences = [s.strip() for s in sentences if s.strip()]
 
     if not sentences or duration == 0:
-        return f"1\n00:00:00,000 --> 00:{int(duration)//60:02d}:{int(duration)%60:02d},000\n{transcript}\n"
+        return f"1\n00:00:00,000 --> {_srt_time(duration)}\n{transcript}\n"
 
     time_per_sentence = duration / len(sentences)
     lines = []
     for i, sentence in enumerate(sentences):
         start_sec = i * time_per_sentence
         end_sec = (i + 1) * time_per_sentence
-        start_h, start_m = divmod(int(start_sec), 3600)
-        start_m2, start_s = divmod(start_m, 60)
-        start_ms = int((start_sec % 1) * 1000)
-        end_h, end_m = divmod(int(end_sec), 3600)
-        end_m2, end_s = divmod(end_m, 60)
-        end_ms = int((end_sec % 1) * 1000)
-        lines.append(
-            f"{i+1}\n"
-            f"{start_h:02d}:{start_m2:02d}:{start_s:02d},{start_ms:03d} --> "
-            f"{end_h:02d}:{end_m2:02d}:{end_s:02d},{end_ms:03d}\n"
-            f"{sentence}"
-        )
+        lines.append(f"{i+1}\n{_srt_time(start_sec)} --> {_srt_time(end_sec)}\n{sentence}")
     return "\n\n".join(lines)
 
 
@@ -730,8 +754,8 @@ def cleanup_audio(m4a_path: Path, wav_path: Path, seg_dir: Path) -> None:
 
 # --- Main ---
 
-def transcribe_episode(token: str, eid: str, model_dir: str, asr_bin: str, keep_audio: bool = False) -> tuple[dict, str]:
-    """Transcribe a single episode. Returns (episode_meta, transcript_text)."""
+def transcribe_episode(token: str, eid: str, model_dir: str, asr_bin: str, keep_audio: bool = False) -> tuple[dict, str, list]:
+    """Transcribe a single episode. Returns (episode_meta, transcript_text, segment_timings)."""
     episode = get_episode_detail(token, eid)
     title = episode.get("title", "未知")
     print(f"\n单集: {title}")
@@ -763,8 +787,8 @@ def transcribe_episode(token: str, eid: str, model_dir: str, asr_bin: str, keep_
 
         ensure_tokenizer(model_dir)
         print("\n开始转录...")
-        transcript = transcribe_segments(segments, model_dir, asr_bin)
-        return episode, transcript
+        transcript, timings = transcribe_segments(segments, model_dir, asr_bin)
+        return episode, transcript, timings
     finally:
         if not keep_audio:
             cleanup_audio(m4a_path, wav_path, seg_dir)
@@ -819,10 +843,10 @@ def run_transcription(args: argparse.Namespace) -> str:
             print(f"\n{'='*40}")
             print(f"批量进度: [{i+1+skipped}/{count}]")
             print(f"{'='*40}")
-            episode, transcript = transcribe_episode(
+            episode, transcript, timings = transcribe_episode(
                 token, eid, model_dir, asr_bin, args.keep_audio,
             )
-            output = formatter(episode, transcript)
+            output = formatter(episode, transcript, timings) if fmt == "srt" else formatter(episode, transcript)
             results.append((episode, output))
 
             if out_dir:
@@ -850,10 +874,10 @@ def run_transcription(args: argparse.Namespace) -> str:
     else:
         raise TranscriptionError("需要 --eid、--keyword 或 --pid")
 
-    episode, transcript = transcribe_episode(
+    episode, transcript, timings = transcribe_episode(
         token, eid, model_dir, asr_bin, args.keep_audio,
     )
-    return formatter(episode, transcript)
+    return formatter(episode, transcript, timings) if fmt == "srt" else formatter(episode, transcript)
 
 
 def main():
