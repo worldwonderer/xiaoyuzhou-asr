@@ -217,6 +217,28 @@ def show_podcast_info(token: str, keyword: str) -> None:
         print()
 
 
+def list_episodes(token: str, pid: str, count: int = 10) -> None:
+    """List recent episodes of a podcast."""
+    episodes = get_episode_list(token, pid, count)
+    if not episodes:
+        print(f"播客 {pid} 没有单集")
+        return
+
+    print(f"\n播客 {pid} 最近 {len(episodes)} 集:\n")
+    for i, ep in enumerate(episodes):
+        eid = ep.get("eid", "?")
+        title = ep.get("title", "未知")
+        pub_date = ep.get("pubDate", "")[:10]
+        duration = ep.get("duration", 0)
+        mins, secs = divmod(duration, 60)
+        play_count = ep.get("playCount", 0)
+        print(f"  {i+1}. {title}")
+        print(f"     EID: {eid} | 日期: {pub_date} | 时长: {int(mins)}:{int(secs):02d}")
+        if play_count:
+            print(f"     播放: {play_count:,}")
+        print()
+
+
 # --- Audio Processing ---
 
 def download_audio(url: str, output_path: Path, max_retries: int = 3) -> Path:
@@ -745,6 +767,7 @@ def main():
     parser.add_argument("--eid", help="单集 ID (可替代关键词搜索)")
     parser.add_argument("--pid", help="播客 ID (批量模式，配合 --count)")
     parser.add_argument("--podcast-info", action="store_true", help="搜索播客并显示 PID 等信息")
+    parser.add_argument("--list-episodes", action="store_true", help="列出播客最近单集 (配合 --pid)")
     parser.add_argument("--count", type=int, default=3, help="批量转录集数 (默认 3)")
     parser.add_argument("--model-dir", help="Qwen3-ASR 模型目录 (或设置 QWEN3_ASR_MODEL_DIR)")
     parser.add_argument("--asr-bin", help="qwen3-asr-rs local_transcribe 路径 (或设置 QWEN3_ASR_BIN)")
@@ -767,6 +790,15 @@ def main():
             if not token:
                 raise ApiError("需要 access token (--token 或 XYZ_ACCESS_TOKEN 环境变量)")
             show_podcast_info(token, args.keyword)
+            return
+
+        if args.list_episodes:
+            if not args.pid:
+                parser.error("--list-episodes 需要配合 --pid 指定播客 ID")
+            token = args.token or os.environ.get("XYZ_ACCESS_TOKEN", "")
+            if not token:
+                raise ApiError("需要 access token (--token 或 XYZ_ACCESS_TOKEN 环境变量)")
+            list_episodes(token, args.pid, args.count or 10)
             return
 
         if not args.eid and not args.keyword and not args.pid:
