@@ -630,10 +630,23 @@ def format_txt(episode: dict, transcript: str, _segment_timings: Optional[list] 
     return f"{header}\n\n{transcript}"
 
 
+def format_json(episode: dict, transcript: str, _segment_timings: Optional[list] = None) -> str:
+    """Format transcript as JSON."""
+    return json.dumps({
+        "title": episode.get("title", ""),
+        "podcast": episode.get("podcast", {}).get("title", ""),
+        "date": episode.get("pubDate", "")[:10],
+        "duration": episode.get("duration", 0),
+        "play_count": episode.get("playCount", 0),
+        "transcript": transcript,
+    }, ensure_ascii=False, indent=2)
+
+
 FORMATTERS = {
     "markdown": format_output,
     "srt": format_srt,
     "txt": format_txt,
+    "json": format_json,
 }
 
 
@@ -892,7 +905,7 @@ def main():
     parser.add_argument("--count", type=int, default=3, help="批量转录集数 (默认 3)")
     parser.add_argument("--model-dir", help="Qwen3-ASR 模型目录 (或设置 QWEN3_ASR_MODEL_DIR)")
     parser.add_argument("--asr-bin", help="qwen3-asr-rs local_transcribe 路径 (或设置 QWEN3_ASR_BIN)")
-    parser.add_argument("--format", choices=["markdown", "srt", "txt"], default="markdown",
+    parser.add_argument("--format", choices=["markdown", "srt", "txt", "json"], default="markdown",
                         help="输出格式 (默认 markdown)")
     parser.add_argument("--output", "-o", help="输出文件/目录路径 (默认 stdout)")
     parser.add_argument("--keep-audio", action="store_true", help="保留下载的音频文件")

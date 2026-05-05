@@ -22,6 +22,7 @@ from transcribe_podcast import (
     _detect_model_dir,
     check_env,
     format_output,
+    format_json,
     format_srt,
     format_txt,
     get_episode_list,
@@ -138,12 +139,28 @@ class TestFormatTxt(unittest.TestCase):
 
 class TestFormattersRegistry(unittest.TestCase):
     def test_all_formats_registered(self):
-        self.assertEqual(set(FORMATTERS.keys()), {"markdown", "srt", "txt"})
+        self.assertEqual(set(FORMATTERS.keys()), {"markdown", "srt", "txt", "json"})
 
     def test_each_formatter_callable(self):
         for name, fn in FORMATTERS.items():
             result = fn(MOCK_EPISODE, "test text")
             self.assertIsInstance(result, str, f"Formatter {name} did not return str")
+
+
+class TestFormatJson(unittest.TestCase):
+    def test_json_output(self):
+        result = format_json(MOCK_EPISODE, "转录内容")
+        parsed = json.loads(result)
+        self.assertEqual(parsed["title"], "测试单集标题")
+        self.assertEqual(parsed["podcast"], "测试播客")
+        self.assertEqual(parsed["date"], "2026-05-05")
+        self.assertEqual(parsed["duration"], 3661)
+        self.assertEqual(parsed["transcript"], "转录内容")
+
+    def test_json_missing_fields(self):
+        result = format_json({}, "text")
+        parsed = json.loads(result)
+        self.assertEqual(parsed["title"], "")
 
 
 class TestPathDetection(unittest.TestCase):
