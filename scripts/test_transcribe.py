@@ -20,6 +20,7 @@ from transcribe_podcast import (
     TranscriptionError,
     _detect_asr_bin,
     _detect_model_dir,
+    stitch_segments,
     check_env,
     format_output,
     format_json,
@@ -307,6 +308,42 @@ class TestConfigFile(unittest.TestCase):
     def test_resolve_setting_none(self):
         result = resolve_setting(None, "NONEXISTENT_VAR", "missing_key")
         self.assertIsNone(result)
+
+
+class TestStitchSegments(unittest.TestCase):
+    def test_single_segment(self):
+        self.assertEqual(stitch_segments(["完整句子。"]), "完整句子。")
+
+    def test_empty(self):
+        self.assertEqual(stitch_segments([]), "")
+
+    def test_merge_cut_sentence(self):
+        result = stitch_segments([
+            "领跑汽车的董事长在车展",
+            "他们计划将海外销量的占比提升到四成。",
+        ])
+        self.assertIn("车展他们计划", result)
+        self.assertNotIn("车展\n\n他们", result)
+
+    def test_keep_complete_sentences(self):
+        result = stitch_segments([
+            "第一段完整句子。",
+            "第二段完整句子。",
+        ])
+        self.assertEqual(result, "第一段完整句子。\n\n第二段完整句子。")
+
+    def test_mixed_boundaries(self):
+        result = stitch_segments([
+            "完整段落。接下来被切断",
+            "的部分继续。新的完整句。",
+            "最后一段。",
+        ])
+        self.assertIn("切断的部分继续", result)
+        self.assertIn("完整句。\n\n最后一段", result)
+
+    def test_exclamation_mark_is_boundary(self):
+        result = stitch_segments(["太好了！", "新的内容"])
+        self.assertIn("太好了！\n\n新的内容", result)
 
 
 if __name__ == "__main__":

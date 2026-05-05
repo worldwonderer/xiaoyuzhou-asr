@@ -221,19 +221,23 @@ def api(endpoint: str, token: str, payload: dict, _retry: bool = True) -> dict:
             return json.loads(resp.read())  # type: ignore[no-any-return]
     except urllib.error.HTTPError as e:
         if e.code == 401 and _retry:
-            refresh_token = os.environ.get("XYZ_REFRESH_TOKEN")
+            refresh_token = os.environ.get("XYZ_REFRESH_TOKEN") or load_config().get("refresh_token")
             if refresh_token:
                 print("  Token 过期，自动刷新...")
                 try:
                     refresh_req = urllib.request.Request(
                         f"{BASE_URL}/refresh_token",
-                        data=json.dumps({"refreshToken": refresh_token}).encode(),
+                        data=json.dumps({
+                            "x-jike-access-token": token,
+                            "x-jike-refresh-token": refresh_token,
+                        }).encode(),
                         headers={"Content-Type": "application/json"},
                         method="POST",
                     )
                     with urllib.request.urlopen(refresh_req) as resp:
                         result = json.loads(resp.read())
-                    new_token = result.get("data", {}).get("token", "")
+                    new_token = (result.get("data", {}).get("x-jike-access-token")
+                                 or result.get("data", {}).get("token", ""))
                     if new_token:
                         os.environ["XYZ_ACCESS_TOKEN"] = new_token
                         return api(endpoint, new_token, payload, _retry=False)
@@ -379,7 +383,10 @@ def get_duration_sec(wav_path: Path) -> float:
          "-of", "csv=p=0", str(wav_path)],
         capture_output=True, text=True,
     )
-    return float(result.stdout.strip())
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        raise AudioError(f"无法获取音频时长: {wav_path} (ffprobe 输出: {result.stderr[:100] or '空'})")
 
 
 def split_audio(wav_path: Path, output_dir: Path) -> list[Path]:
@@ -404,22 +411,19 @@ def split_audio(wav_path: Path, output_dir: Path) -> list[Path]:
     split_times: list[float] = []
     for t in ends:
         sec = float(t)
-        if sec < MIN_SEGMENT_SEC:
+        if sec < MIN_SEGMENT_SEC or sec >= duration - 1:
             continue
         if not split_times or sec - split_times[-1] >= MAX_SEGMENT_SEC * 0.8:
             split_times.append(sec)
 
-    # Ensure we don't miss the tail
-    if not split_times or duration - split_times[-1] > MAX_SEGMENT_SEC:
-        t = MAX_SEGMENT_SEC
-        while t < duration:
-            if not any(abs(t - s) < 60 for s in split_times):
-                split_times.append(t)
-            t += MAX_SEGMENT_SEC
+    # Always fill gaps with evenly-spaced splits
+    t = MAX_SEGMENT_SEC
+    while t < duration:
+        if not any(abs(t - s) < 60 for s in split_times):
+            split_times.append(t)
+        t += MAX_SEGMENT_SEC
 
     split_times.sort()
-    if not split_times:
-        split_times = [MAX_SEGMENT_SEC]
 
     print(f"  分割点: {[f'{t:.0f}s' for t in split_times]}")
 
@@ -496,6 +500,23 @@ def ensure_tokenizer(model_dir: str) -> None:
 
 # --- Transcription ---
 
+_SENTENCE_END = frozenset("。！？.!?")
+
+def stitch_segments(texts: list[str]) -> str:
+    """Join segment texts, merging cut sentences at boundaries."""
+    if len(texts) <= 1:
+        return texts[0] if texts else ""
+    result = [texts[0]]
+    for text in texts[1:]:
+        prev = result[-1]
+        # If previous segment doesn't end with sentence punctuation, merge
+        if prev and prev[-1] not in _SENTENCE_END:
+            result[-1] = prev + text
+        else:
+            result.append(text)
+    return "\n\n".join(result)
+
+
 def transcribe_segment(wav_path: Path, model_dir: str, asr_bin: str) -> str:
     """Transcribe a single WAV segment using qwen3-asr-rs."""
     cmd = [asr_bin, model_dir, str(wav_path)]
@@ -528,7 +549,7 @@ def transcribe_segments(segments: list[Path], model_dir: str, asr_bin: str) -> t
             texts.append(text)
             timings.append((text, offset, offset + seg_dur))
             offset += seg_dur
-    return "\n\n".join(texts), timings
+    return stitch_segments(texts), timings
 
 
 # --- Output ---
@@ -538,10 +559,10 @@ def format_output(episode: dict, transcript: str, _segment_timings: Optional[lis
     title = episode.get("title", "未知标题")
     podcast = episode.get("podcast", {})
     podcast_title = podcast.get("title", "未知节目")
-    pub_date = episode.get("pubDate", "")
-    duration = episode.get("duration", 0)
+    pub_date = episode.get("pubDate") or ""
+    duration = episode.get("duration") or 0
     mins, secs = divmod(duration, 60)
-    play_count = episode.get("playCount", 0)
+    play_count = episode.get("playCount") or 0
 
     lines = [
         f"# {title}",
@@ -620,7 +641,7 @@ def format_txt(episode: dict, transcript: str, _segment_timings: Optional[list] 
     title = episode.get("title", "未知标题")
     podcast = episode.get("podcast", {})
     podcast_title = podcast.get("title", "未知节目")
-    pub_date = episode.get("pubDate", "")
+    pub_date = episode.get("pubDate") or ""
 
     header = f"{title}"
     if podcast_title:
@@ -633,11 +654,11 @@ def format_txt(episode: dict, transcript: str, _segment_timings: Optional[list] 
 def format_json(episode: dict, transcript: str, _segment_timings: Optional[list] = None) -> str:
     """Format transcript as JSON."""
     return json.dumps({
-        "title": episode.get("title", ""),
-        "podcast": episode.get("podcast", {}).get("title", ""),
-        "date": episode.get("pubDate", "")[:10],
-        "duration": episode.get("duration", 0),
-        "play_count": episode.get("playCount", 0),
+        "title": episode.get("title") or "",
+        "podcast": (episode.get("podcast") or {}).get("title") or "",
+        "date": (episode.get("pubDate") or "")[:10],
+        "duration": episode.get("duration") or 0,
+        "play_count": episode.get("playCount") or 0,
         "transcript": transcript,
     }, ensure_ascii=False, indent=2)
 

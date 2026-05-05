@@ -162,7 +162,7 @@ from transcribe_podcast import (
 )
 
 try:
-    episode, transcript = transcribe_episode(token, eid, model_dir, asr_bin)
+    episode, transcript, timings = transcribe_episode(token, eid, model_dir, asr_bin)
     output = format_output(episode, transcript)
 except TranscriptionError as e:
     print(f"Error: {e}")
